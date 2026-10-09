@@ -44,27 +44,28 @@ def get_current_user(
 
     user_id = payload.get("sub")
 
-
-    if not user_id:
+    if not user_id or payload.get("token_type") != "access":
 
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token data"
+            detail="Invalid access token"
         )
 
+    try:
+        parsed_user_id = int(user_id)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid access token"
+        )
 
-    user = (
-        db.query(User)
-        .filter(User.id == int(user_id))
-        .first()
-    )
-
+    user = db.query(User).filter(User.id == parsed_user_id).first()
 
     if not user:
 
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid access token"
         )
 
 

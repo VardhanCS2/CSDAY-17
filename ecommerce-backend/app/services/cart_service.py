@@ -31,53 +31,30 @@ def get_user_cart(
     db: Session,
     user_id: int
 ):
-
-    # Get cart from Redis
     cart = get_cart(
         user_id
     )
 
-
     if not cart:
-
         return []
 
+    product_ids = [int(product_id) for product_id in cart]
+    products = db.query(Product).filter(Product.id.in_(product_ids)).all()
+    products_by_id = {product.id: product for product in products}
 
-
-    cart_details = []
-
-
-
-    for product_id, quantity in cart.items():
-
-        product = db.query(Product).filter(
-            Product.id == int(product_id)
-        ).first()
-
-
-
-        if product:
-
-            cart_details.append(
-
-                {
-                    "product_id": product.id,
-
-                    "name": product.name,
-
-                    "description": product.description,
-
-                    "price": product.price,
-
-                    "quantity": quantity,
-
-                    "total_price": product.price * quantity
-                }
-
-            )
-
-
-    return cart_details
+    return [
+        {
+            "product_id": product.id,
+            "name": product.name,
+            "description": product.description,
+            "image_url": product.image_url,
+            "price": product.price,
+            "quantity": cart[str(product_id)],
+            "total_price": product.price * cart[str(product_id)],
+        }
+        for product_id in product_ids
+        if (product := products_by_id.get(product_id)) is not None
+    ]
 
 
 

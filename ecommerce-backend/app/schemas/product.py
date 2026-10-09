@@ -10,6 +10,7 @@ class ProductCreate(BaseModel):
     description: str | None = None
     price: float
     stock: int
+    image_url: str | None = None
 
 
 
@@ -19,6 +20,7 @@ class ProductUpdate(BaseModel):
     description: str | None = None
     price: float | None = None
     stock: int | None = None
+    image_url: str | None = None
 
 
 

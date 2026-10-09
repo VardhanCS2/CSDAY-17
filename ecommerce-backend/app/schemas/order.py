@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
@@ -21,8 +23,19 @@ class ShippingAddress(BaseModel):
         return value
 
 
+class OrderItemCreate(BaseModel):
+    product_id: int = Field(gt=0)
+    quantity: int = Field(gt=0, le=100)
+
+
 class OrderCreate(BaseModel):
     shipping_address: ShippingAddress | None = None
+    items: list[OrderItemCreate] | None = Field(default=None, min_length=1)
+    payment_method: Literal["card", "upi", "cash_on_delivery"] | None = None
+
+
+class OrderStatusUpdate(BaseModel):
+    status: Literal["Packed", "Shipped", "Out for Delivery", "Delivered", "Completed"]
 
 
 class OrderItemResponse(BaseModel):
@@ -48,6 +61,7 @@ class OrderResponse(BaseModel):
     status: str
     created_at: datetime
     shipping_address: ShippingAddress | None = None
+    payment_method: Literal["card", "upi", "cash_on_delivery"] | None = None
     items: list[OrderItemResponse]
 
 

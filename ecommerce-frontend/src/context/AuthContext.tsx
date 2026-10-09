@@ -19,8 +19,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       useAuthStore.getState().expireSession()
       queryClient.removeQueries({ queryKey: ['cart'] })
     }
+    const updateAccessToken = (event: Event) => {
+      if (event instanceof CustomEvent && typeof event.detail === 'string') {
+        useAuthStore.getState().updateToken(event.detail)
+      }
+    }
     window.addEventListener('session-expired', expireSession)
-    return () => window.removeEventListener('session-expired', expireSession)
+    window.addEventListener('access-token-refreshed', updateAccessToken)
+    return () => {
+      window.removeEventListener('session-expired', expireSession)
+      window.removeEventListener('access-token-refreshed', updateAccessToken)
+    }
   }, [queryClient])
 
   useEffect(() => {

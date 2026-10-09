@@ -4,6 +4,7 @@ import { AuthProvider } from '@/context/AuthContext'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { StoreLayout } from '@/components/StoreLayout'
 import { StorefrontPage } from '@/pages/StorefrontPage'
+import { BackgroundJobsPage } from '@/pages/BackgroundJobsPage'
 import './App.css'
 
 const AuthPage = lazy(() => import('@/pages/AuthPage').then((module) => ({ default: module.AuthPage })))
@@ -29,7 +30,9 @@ export default function App() {
               <Route element={<ProtectedRoute />}>
                 <Route path="cart" element={<CartPage />} />
                 <Route path="checkout" element={<CheckoutPage />} />
+                <Route path="payments" element={<CheckoutPage />} />
                 <Route path="orders" element={<OrdersPage />} />
+                <Route path="jobs" element={<BackgroundJobsPage />} />
               </Route>
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>

@@ -3,7 +3,9 @@ import { api, responseData } from '@/api/client'
 import { useAuthStore } from '@/stores/auth-store'
 import type { Order } from '@/types/models'
 
-interface OrderAction { orderId: number; action: 'cancel' | 'complete' }
+type OrderAction =
+  | { orderId: number; action: 'cancel' }
+  | { orderId: number; action: 'status'; status: Order['status'] }
 
 export function useOrders({ admin = false }: { admin?: boolean } = {}) {
   const userId = useAuthStore((state) => state.user?.id)
@@ -20,11 +22,14 @@ export function useOrderActions({ admin = false }: { admin?: boolean } = {}) {
   const userId = useAuthStore((state) => state.user?.id)
   const queryKey = admin ? ['admin', 'orders'] : ['orders', userId]
   return useMutation<unknown, Error, OrderAction, { previousOrders: Order[] }>({
-    mutationFn: ({ orderId, action }: OrderAction) => api.patch(`/orders/${orderId}/${action}`),
-    onMutate: async ({ orderId, action }) => {
+    mutationFn: (variables: OrderAction) => variables.action === 'cancel'
+      ? api.patch(`/orders/${variables.orderId}/cancel`)
+      : api.patch(`/orders/${variables.orderId}/status`, { status: variables.status }),
+    onMutate: async (variables) => {
+      const { orderId, action } = variables
       await queryClient.cancelQueries({ queryKey })
       const previousOrders = queryClient.getQueryData<Order[]>(queryKey) || []
-      const status = action === 'cancel' ? 'Cancelled' : 'Completed'
+      const status = action === 'cancel' ? 'Cancelled' : variables.status
       queryClient.setQueryData(queryKey, previousOrders.map((order) =>
         order.id === orderId ? { ...order, status } : order,
       ))

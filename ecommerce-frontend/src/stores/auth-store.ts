@@ -7,6 +7,7 @@ interface AuthState {
   token: string | null
   user: User | null
   loading: boolean
+  updateToken: (token: string) => void
   initialize: () => Promise<void>
   login: (email: string, password: string) => Promise<User>
   register: (name: string, email: string, password: string) => Promise<User>
@@ -27,6 +28,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   token: localStorage.getItem('access_token'),
   user: null,
   loading: Boolean(localStorage.getItem('access_token')),
+  updateToken: (token) => set({ token }),
   initialize: async () => {
     if (!get().token) {
       set({ loading: false })

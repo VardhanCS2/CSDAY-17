@@ -1,8 +1,9 @@
 from sqlalchemy.orm import Session
 
-from sqlalchemy import or_
+from sqlalchemy import case, desc, func, literal, literal_column, or_, text
 
 from app.models.product import Product
+from app.core.config import settings
 
 from app.schemas.product import (
     ProductCreate,
@@ -35,6 +36,8 @@ def create_new_product(
 
         stock=product_data.stock,
 
+        image_url=product_data.image_url,
+
         owner_id=owner_id
 
     )
@@ -54,7 +57,8 @@ def get_all_products(
     search: str | None = None,
     min_price: float | None = None,
     max_price: float | None = None,
-    stock_available: bool | None = None
+    stock_available: bool | None = None,
+    search_mode: str = "hybrid",
 ):
 
     query = db.query(Product)
@@ -63,23 +67,88 @@ def get_all_products(
 
     # Search by product name or description
 
-    if search:
+    if search and search.strip():
+        search_text = search.strip()
+        search_terms = list(dict.fromkeys(search_text.split()))
 
-        query = query.filter(
+        def contains_pattern(term: str) -> str:
+            escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            return f"%{escaped}%"
 
-            or_(
-
-                Product.name.ilike(
-                    f"%{search}%"
-                ),
-
-                Product.description.ilike(
-                    f"%{search}%"
-                )
-
+        if db.bind is not None and db.bind.dialect.name == "postgresql":
+            vector = func.to_tsvector(
+                literal_column("'english'"),
+                func.coalesce(Product.name, literal_column("''"))
+                + literal_column("' '")
+                + func.coalesce(Product.description, literal_column("''")),
             )
-
-        )
+            terms = func.plainto_tsquery("english", search_text)
+            full_text_match = vector.op("@@")(terms)
+            fuzzy_terms = list(dict.fromkeys(
+                term for term in [search_text, *search_terms] if len(term) >= 3
+            ))
+            if fuzzy_terms:
+                db.execute(
+                    text("SELECT set_config('pg_trgm.word_similarity_threshold', :threshold, true)"),
+                    {"threshold": str(settings.PRODUCT_SEARCH_SIMILARITY_THRESHOLD)},
+                )
+                fuzzy_match = or_(*(
+                    condition
+                    for term in fuzzy_terms
+                    for condition in (
+                        literal(term).bool_op("<%")(Product.name),
+                        literal(term).bool_op("<%")(Product.description),
+                    )
+                ))
+                fuzzy_score = func.greatest(*(
+                    func.word_similarity(term, column)
+                    for term in fuzzy_terms
+                    for column in (Product.name, Product.description)
+                ))
+            else:
+                fuzzy_match = literal_column("false")
+                fuzzy_score = literal_column("0.0")
+            partial_match = or_(*(
+                condition
+                for term in search_terms
+                for condition in (
+                    Product.name.ilike(contains_pattern(term), escape="\\"),
+                    Product.description.ilike(contains_pattern(term), escape="\\"),
+                )
+            ))
+            if search_mode == "full_text":
+                query = query.filter(full_text_match)
+                query = query.order_by(desc(func.ts_rank_cd(vector, terms)))
+            elif search_mode == "fuzzy":
+                query = query.filter(or_(partial_match, fuzzy_match))
+                query = query.order_by(desc(fuzzy_score))
+            else:
+                query = query.filter(or_(full_text_match, partial_match, fuzzy_match))
+                partial_score = sum(
+                    case(
+                        (Product.name.ilike(f"{term}%", escape="\\"), 2.0),
+                        (Product.name.ilike(contains_pattern(term), escape="\\"), 1.0),
+                        (Product.description.ilike(contains_pattern(term), escape="\\"), 0.5),
+                        else_=0.0,
+                    )
+                    for term in search_terms
+                )
+                query = query.order_by(
+                    desc(
+                        func.ts_rank_cd(vector, terms)
+                        + partial_score
+                        + fuzzy_score
+                    )
+                )
+        else:
+            query = query.filter(or_(
+                condition
+                for term in search_terms
+                for condition in (
+                    Product.name.ilike(contains_pattern(term), escape="\\"),
+                    Product.description.ilike(contains_pattern(term), escape="\\"),
+                )
+            ))
 
 
 

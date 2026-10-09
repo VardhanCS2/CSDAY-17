@@ -10,18 +10,21 @@ from app.redis.cache import (
 
 
 from app.models.product import Product
+from app.models.order_item import OrderItem
+from app.models.order import Order
 from app.models.user import User
 
 
 from app.crud.order import (
     create_order,
-    create_order_item,
     get_all_orders as get_all_orders_crud,
     get_user_orders,
     get_order_by_id,
     cancel_order_by_id,
-    complete_order_by_id,
+    update_order_status_by_id,
 )
+
+from sqlalchemy.orm import selectinload
 
 
 from app.celery.tasks import send_order_email
@@ -32,10 +35,14 @@ def place_order(
     db: Session,
     user_id: int,
     shipping_address: dict | None = None,
+    requested_items: list[dict[str, int]] | None = None,
+    payment_method: str | None = None,
 ):
 
-    cart = get_cart(
-        user_id
+    cart = (
+        {str(item["product_id"]): item["quantity"] for item in requested_items}
+        if requested_items is not None
+        else get_cart(user_id)
     )
 
 
@@ -64,23 +71,19 @@ def place_order(
 
 
 
-    total_amount = 0
-
+    product_ids = [int(product_id) for product_id in cart]
+    products_by_id = {
+        product.id: product
+        for product in db.query(Product)
+        .filter(Product.id.in_(product_ids))
+        .with_for_update()
+        .all()
+    }
+    total_amount = 0.0
     products = []
 
-
-
-    # Check products and stock
-
     for product_id, quantity in cart.items():
-
-        product = (
-            db.query(Product)
-            .filter(
-                Product.id == int(product_id)
-            )
-            .first()
-        )
+        product = products_by_id.get(int(product_id))
 
 
         if not product:
@@ -122,6 +125,7 @@ def place_order(
         user_id,
         total_amount,
         shipping_address=shipping_address,
+        payment_method=payment_method,
     )
 
 
@@ -131,43 +135,27 @@ def place_order(
     for product, quantity in products:
 
 
-        create_order_item(
-            db,
-            order.id,
-            product.id,
-            quantity,
-            product.price
-        )
-
-
+        db.add(OrderItem(
+            order_id=order.id,
+            product_id=product.id,
+            quantity=quantity,
+            price=product.price,
+        ))
         product.stock -= quantity
 
-
-
     db.commit()
-
-
-
-    # Clear Redis cart
-
-    clear_cart(
-        user_id
+    order = (
+        db.query(Order)
+        .options(selectinload(Order.items).joinedload(OrderItem.product))
+        .filter(Order.id == order.id)
+        .one()
     )
 
+    if requested_items is None:
+        clear_cart(user_id)
 
-
-    # Send email in background using Celery
-
-    send_order_email.delay(
-        user.email,
-        order.id
-    )
-
-
-
+    send_order_email.delay(user.email, order.id)
     return order
-
-
 
 
 def get_orders(
@@ -179,8 +167,6 @@ def get_orders(
         db,
         user_id
     )
-
-
 
 
 def get_all_orders(
@@ -203,7 +189,6 @@ def get_order(
     )
 
 
-
 def cancel_order(
     db: Session,
     order_id: int,
@@ -217,5 +202,5 @@ def cancel_order(
     )
 
 
-def complete_order(db: Session, order_id: int):
-    return complete_order_by_id(db, order_id)
+def update_order_status(db: Session, order_id: int, status: str):
+    return update_order_status_by_id(db, order_id, status)

@@ -40,6 +40,7 @@ export function StorefrontPage() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
+  const [searchFocused, setSearchFocused] = useState(false)
   const [minPrice, setMinPrice] = useState('')
   const [maxPrice, setMaxPrice] = useState('')
   const [stock, setStock] = useState<'all' | 'in' | 'out'>('all')
@@ -67,6 +68,7 @@ export function StorefrontPage() {
   }), [products, sort])
   const total = productsQuery.data?.pages[0]?.total || 0
   const error = productsQuery.error ? errorMessage(productsQuery.error) : ''
+  const suggestions = sortedProducts.slice(0, 5)
 
   useEffect(() => {
     if (isLoadMoreVisible && hasNextPage && !isFetchingNextPage) {
@@ -117,7 +119,20 @@ export function StorefrontPage() {
           <span className="result-total">{total} {total === 1 ? 'piece' : 'pieces'}</span>
         </div>
         <div className="filter-bar">
-          <label className="search-field"><Search size={17} /><Input aria-label="Search products" placeholder="Search the collection" value={search} onChange={(event) => updateFilter(setSearch, event.target.value)} /><kbd>⌕</kbd></label>
+          <div className="search-box">
+            <label className="search-field"><Search size={17} /><Input aria-label="Search products" placeholder="Search by product, material, or style" value={search} onFocus={() => setSearchFocused(true)} onBlur={() => window.setTimeout(() => setSearchFocused(false), 120)} onKeyDown={(event) => { if (event.key === 'Escape') setSearchFocused(false) }} onChange={(event) => updateFilter(setSearch, event.target.value)} autoComplete="off" /><kbd>⌕</kbd></label>
+            {searchFocused && debouncedSearch && (
+              <div className="search-suggestions" role="listbox" aria-label="Matching products">
+                {productsQuery.isFetching && !suggestions.length ? <p className="search-suggestion-empty">Searching the collection…</p> : suggestions.length ? suggestions.map((product) => (
+                  <Link key={product.id} to={`/product/${product.id}`} className="search-suggestion" role="option" aria-selected="false" onClick={() => setSearchFocused(false)}>
+                    <ProductImage product={product} className="search-suggestion-image" />
+                    <span><strong>{product.name}</strong><small>{product.description || 'Everyday essential'}</small></span>
+                    <b>{formatPrice(product.price)}</b>
+                  </Link>
+                )) : <p className="search-suggestion-empty">No close matches yet. Try another spelling.</p>}
+              </div>
+            )}
+          </div>
           <div className="filter-controls">
             <label className="compact-filter"><span>Price</span><Input aria-label="Minimum price" type="number" min="0" placeholder="Min" value={minPrice} onChange={(event) => updateFilter(setMinPrice, event.target.value)} /><span className="price-divider">to</span><Input aria-label="Maximum price" type="number" min="0" placeholder="Max" value={maxPrice} onChange={(event) => updateFilter(setMaxPrice, event.target.value)} /></label>
             <label className="select-filter"><SlidersHorizontal size={15} /><select aria-label="Availability" value={stock} onChange={(event) => { const value = event.target.value; if (value === 'all' || value === 'in' || value === 'out') setStock(value) }}><option value="all">Availability</option><option value="in">In stock</option><option value="out">Sold out</option></select></label>

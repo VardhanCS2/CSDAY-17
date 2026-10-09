@@ -57,6 +57,11 @@ class Order(Base):
         nullable=True
     )
 
+    payment_method = Column(
+        String(30),
+        nullable=True
+    )
+
 
     items = relationship(
         "OrderItem",

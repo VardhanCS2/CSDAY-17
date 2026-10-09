@@ -6,6 +6,8 @@ from fastapi import (
     File,
     Form
 )
+from urllib.parse import urlsplit
+from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -64,7 +66,7 @@ def get_products(
     max_price: float | None = None,
 
     stock_available: bool | None = None,
-
+    search_mode: Literal["hybrid", "full_text", "fuzzy"] = "hybrid",
     db: Session = Depends(get_db)
 
 ):
@@ -83,7 +85,8 @@ def get_products(
 
         max_price,
 
-        stock_available
+        stock_available,
+        search_mode
 
     )
 
@@ -136,6 +139,20 @@ def get_product(
     )
 
 
+def validate_image_url(image_url: str | None) -> str | None:
+    if image_url is None or not image_url.strip():
+        return None
+    normalized = image_url.strip()
+    try:
+        parsed = urlsplit(normalized)
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail="Image URL must be an absolute HTTP or HTTPS URL.") from error
+    if parsed.scheme not in {"http", "https"} or not hostname or parsed.username or parsed.password:
+        raise HTTPException(status_code=400, detail="Image URL must be an absolute HTTP or HTTPS URL.")
+    return normalized
+
 
 # Admin create product
 
@@ -150,6 +167,8 @@ def create_product(
 
     stock: int = Form(...),
 
+    image_url: str | None = Form(None),
+
     image: UploadFile = File(None),
 
     db: Session = Depends(get_db),
@@ -158,8 +177,10 @@ def create_product(
 
 ):
 
-    image_path = None
+    if image is not None and image_url and image_url.strip():
+        raise HTTPException(status_code=400, detail="Choose either an image URL or an uploaded image, not both.")
 
+    image_path = None
 
     if image:
 
@@ -175,7 +196,9 @@ def create_product(
 
         price=price,
 
-        stock=stock
+        stock=stock,
+
+        image_url=validate_image_url(image_url) if image_path is None else None
 
     )
 
@@ -193,7 +216,6 @@ def create_product(
 
 
     if image_path:
-
         product.image_url = image_path
 
         db.commit()
@@ -211,6 +233,22 @@ def create_product(
     )
 
 
+@router.post("/{product_id}/image")
+def upload_product_image(
+    product_id: int,
+    image: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    product = get_single_product(db, product_id)
+    if product is None:
+        raise HTTPException(status_code=404, detail="Product not found")
+    image_path = save_image(image)
+    product.image_url = image_path
+    db.commit()
+    db.refresh(product)
+    return success_response(data=product, message="Product image updated successfully")
+
 
 @router.put("/{product_id}")
 def update_product(
@@ -224,6 +262,8 @@ def update_product(
     current_user: User = Depends(get_current_admin)
 
 ):
+    if "image_url" in product_data.model_fields_set:
+        product_data.image_url = validate_image_url(product_data.image_url)
 
     product = update_existing_product(
 

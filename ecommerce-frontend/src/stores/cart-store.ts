@@ -23,6 +23,7 @@ export const useCartStore = create<CartState>((set) => ({
         product_id: product.id,
         name: product.name,
         description: product.description,
+        image_url: product.image_url,
         price: product.price,
         quantity,
         total_price: product.price * quantity,

@@ -16,10 +16,9 @@ from app.models.user import User
 
 from app.schemas.user import (
     UserCreate,
-    UserLogin,
-    UserResponse,
-    TokenResponse
+    UserLogin
 )
+from app.schemas.token import TokenRefresh
 
 
 from app.services.auth_service import (
@@ -30,7 +29,8 @@ from app.services.auth_service import (
 
 from app.core.security import (
     create_access_token,
-    create_refresh_token
+    create_refresh_token,
+    decode_token,
 )
 
 
@@ -141,4 +141,33 @@ def get_current_profile(
             "updated_at": str(current_user.updated_at)
         },
         message="User profile fetched successfully"
-    )
+    )
+
+
+
+@router.post("/refresh")
+def refresh_tokens(
+    token_data: TokenRefresh,
+    db: Session = Depends(get_db),
+):
+    payload = decode_token(token_data.refresh_token)
+    if not payload or payload.get("token_type") != "refresh":
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+
+    try:
+        user_id = int(payload["sub"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(status_code=401, detail="Invalid refresh token data")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    return success_response(
+        data={
+            "access_token": create_access_token({"sub": str(user.id), "role": user.role}),
+            "refresh_token": create_refresh_token({"sub": str(user.id)}),
+            "token_type": "bearer",
+        },
+        message="Tokens refreshed successfully",
+    )

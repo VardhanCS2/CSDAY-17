@@ -1,23 +1,21 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState, type FormEvent } from 'react'
-import { CheckCircle2, ClipboardList, ImagePlus, PackagePlus, Pencil, RefreshCw, ShieldCheck, Trash2, X } from 'lucide-react'
+import { useState } from 'react'
+import { ArrowRight, CheckCircle2, ClipboardList, PackagePlus, Pencil, RefreshCw, ShieldCheck, Trash2, X } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import { api, errorMessage, responseData } from '@/api/client'
 import { useOrderActions, useOrders } from '@/hooks/use-orders'
 import { ProductImage } from '@/components/ProductImage'
-import { Badge } from '@/components/ui/badge'
+import { AdminProductEditor, type ProductEditorValues } from '@/components/AdminProductEditor'
+import { CsvImportPanel } from '@/components/CsvImportPanel'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { formatPrice } from '@/lib/utils'
-import { productSchema } from '@/lib/validation'
+import { formatPaymentMethod, formatPrice } from '@/lib/utils'
 import { useAuth } from '@/hooks/useAuth'
 import type { Order, Paginated, Product } from '@/types/models'
-import type { z } from 'zod'
 
-type ProductForm = { name: string; description: string; price: string; stock: string; image: File | null }
 type ProductSection = 'orders' | 'products'
-type ProductValues = z.infer<typeof productSchema>
-interface SaveProductVariables { product: Product | null; data: ProductValues; image: File | null }
+type OrderFilter = 'All' | typeof orderStatuses[number]
+interface SaveProductVariables { product: Product | null; submission: ProductEditorValues }
 interface SaveProductContext {
   productsKey: readonly ['admin', 'products']
   previousList: Paginated<Product> | undefined
@@ -28,22 +26,29 @@ interface DeleteProductContext {
   productsKey: readonly ['admin', 'products']
   previousList: Paginated<Product> | undefined
 }
-const emptyProduct: ProductForm = { name: '', description: '', price: '', stock: '', image: null }
+const orderStatuses = ['Pending', 'Packed', 'Shipped', 'Out for Delivery', 'Delivered', 'Completed', 'Cancelled'] as const
+type OrderStatus = typeof orderStatuses[number]
+const nextOrderStep: Partial<Record<string, { status: OrderStatus; label: string }>> = {
+  Pending: { status: 'Packed', label: 'Pack order' },
+  Packed: { status: 'Shipped', label: 'Ship order' },
+  Shipped: { status: 'Out for Delivery', label: 'Out for delivery' },
+  'Out for Delivery': { status: 'Delivered', label: 'Mark delivered' },
+  Delivered: { status: 'Completed', label: 'Complete order' },
+}
 
 export function AdminPage() {
   const { user } = useAuth()
   const queryClient = useQueryClient()
   const [section, setSection] = useState<ProductSection>('orders')
-  const [saving, setSaving] = useState(false)
-  const [formOpen, setFormOpen] = useState(false)
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null)
-  const [form, setForm] = useState<ProductForm>(emptyProduct)
+  const [orderFilter, setOrderFilter] = useState<OrderFilter>('All')
+  const [creatingProduct, setCreatingProduct] = useState(false)
+  const [editingProductId, setEditingProductId] = useState<number | null>(null)
   const [error, setError] = useState('')
   const [busyOrder, setBusyOrder] = useState<number | null>(null)
   const ordersQuery = useOrders({ admin: true })
   const productsQuery = useQuery({
     queryKey: ['admin', 'products'],
-    queryFn: async () => responseData<Paginated<Product>>(await api.get('/products/', { params: { page: 1, limit: 100 } })),
+    queryFn: async () => responseData<Paginated<Product>>(await api.get('/products/', { params: { page: 1, limit: 200 } })),
   })
   const orders = ordersQuery.data || []
   const products = productsQuery.data?.items || []
@@ -51,31 +56,45 @@ export function AdminPage() {
   const orderMutation = useOrderActions({ admin: true })
 
   const saveProductMutation = useMutation<unknown, Error, SaveProductVariables, SaveProductContext>({
-    mutationFn: async ({ product, data, image }) => {
+    mutationFn: async ({ product, submission }) => {
+      const { values, image, imageMode } = submission
       if (product) {
+        if (imageMode === 'upload' && image) {
+          const payload = new FormData()
+          payload.append('image', image)
+          await api.post(`/products/${product.id}/image`, payload)
+        }
         return api.put(`/products/${product.id}`, {
-          name: data.name,
-          description: data.description || null,
-          price: data.price,
-          stock: data.stock,
+          name: values.name,
+          description: values.description || null,
+          price: values.price,
+          stock: values.stock,
+          ...(imageMode === 'url' ? { image_url: values.image_url || null } : {}),
         })
       }
       const payload = new FormData()
-      payload.append('name', data.name)
-      payload.append('description', data.description)
-      payload.append('price', String(data.price))
-      payload.append('stock', String(data.stock))
-      if (image) payload.append('image', image)
+      payload.append('name', values.name)
+      payload.append('description', values.description)
+      payload.append('price', String(values.price))
+      payload.append('stock', String(values.stock))
+      if (imageMode === 'url' && values.image_url) payload.append('image_url', values.image_url)
+      if (imageMode === 'upload' && image) payload.append('image', image)
       return api.post('/products/', payload)
     },
-    onMutate: async ({ product, data }) => {
+    onMutate: async ({ product, submission }) => {
       const productsKey = ['admin', 'products'] as const
       if (!product) return { productsKey, previousList: queryClient.getQueryData<Paginated<Product>>(productsKey) }
       await queryClient.cancelQueries({ queryKey: productsKey })
       await queryClient.cancelQueries({ queryKey: ['product', product.id] })
       const previousList = queryClient.getQueryData<Paginated<Product>>(productsKey)
       const previousProduct = queryClient.getQueryData<Product>(['product', product.id])
-      const optimisticProduct = { ...product, ...data }
+      const optimisticProduct = {
+        ...product,
+        ...submission.values,
+        image_url: submission.imageMode === 'url'
+          ? submission.values.image_url || null
+          : product.image_url,
+      }
       queryClient.setQueryData<Paginated<Product>>(productsKey, (current) => current && ({
         ...current,
         items: current.items.map((item) => item.id === product.id ? optimisticProduct : item),
@@ -117,53 +136,39 @@ export function AdminPage() {
 
   function changeSection(value: ProductSection) {
     setError('')
-    setFormOpen(false)
+    setCreatingProduct(false)
+    setEditingProductId(null)
     setSection(value)
   }
 
   function beginCreate() {
-    setFormOpen(true)
-    setEditingProduct(null)
-    setForm(emptyProduct)
+    setCreatingProduct(true)
+    setEditingProductId(null)
     setError('')
   }
 
   function beginEdit(product: Product) {
-    setFormOpen(true)
-    setEditingProduct(product)
-    setForm({ name: product.name, description: product.description || '', price: String(product.price), stock: String(product.stock), image: null })
+    setCreatingProduct(false)
+    setEditingProductId(product.id)
     setError('')
   }
 
-  async function saveProduct(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const parsed = productSchema.safeParse(form)
-    if (!parsed.success) {
-      const issues = Object.fromEntries(parsed.error.issues.map((issue) => [issue.path[0], issue.message]))
-      setError(Object.values(issues)[0])
-      toast.error(Object.values(issues)[0])
-      return
-    }
-
-    setSaving(true)
+  async function saveProduct(product: Product | null, submission: ProductEditorValues) {
     setError('')
     try {
-      if (editingProduct) {
-        await saveProductMutation.mutateAsync({ product: editingProduct, data: parsed.data, image: form.image })
+      if (product) {
+        await saveProductMutation.mutateAsync({ product, submission })
         toast.success('Product updated successfully.')
       } else {
-        await saveProductMutation.mutateAsync({ product: null, data: parsed.data, image: form.image })
+        await saveProductMutation.mutateAsync({ product: null, submission })
         toast.success('Product created successfully.')
       }
-      setEditingProduct(null)
-      setForm(emptyProduct)
-      setFormOpen(false)
+      setEditingProductId(null)
+      setCreatingProduct(false)
     } catch (requestError) {
       const message = errorMessage(requestError)
       setError(message)
       toast.error(message)
-    } finally {
-      setSaving(false)
     }
   }
 
@@ -195,12 +200,12 @@ export function AdminPage() {
     }
   }
 
-  async function completeOrder(order: Order) {
+  async function advanceOrder(order: Order, status: OrderStatus) {
     setBusyOrder(order.id)
     setError('')
     try {
-      await orderMutation.mutateAsync({ orderId: order.id, action: 'complete' })
-      toast.success(`Order #${order.id} marked completed.`)
+      await orderMutation.mutateAsync({ orderId: order.id, action: 'status', status })
+      toast.success(`Order #${order.id} moved to ${status}.`)
     } catch (requestError) {
       const message = errorMessage(requestError)
       setError(message)
@@ -212,6 +217,7 @@ export function AdminPage() {
 
   const pendingCount = orders.filter((order) => order.status === 'Pending').length
   const orderRevenue = orders.reduce((sum, order) => sum + Number(order.total_amount || 0), 0)
+  const visibleOrders = orderFilter === 'All' ? orders : orders.filter((order) => order.status === orderFilter)
 
   return (
     <main className="admin-page">
@@ -233,38 +239,78 @@ export function AdminPage() {
           <button role="tab" aria-selected={section === 'products'} className={section === 'products' ? 'selected' : ''} onClick={() => changeSection('products')}><PackagePlus size={15} /> Products</button>
         </div>
         <div className="admin-actions">
+          <Link className="text-link" to="/jobs">Background jobs <ArrowRight size={14} /></Link>
           {section === 'products' && <Button size="sm" onClick={beginCreate}><PackagePlus size={14} /> Add product</Button>}
           <Button variant="outline" size="sm" aria-label="Refresh admin data" title="Refresh" onClick={() => { ordersQuery.refetch(); productsQuery.refetch() }}><RefreshCw size={14} /> Refresh</Button>
         </div>
       </div>
 
+      {section === 'products' && <CsvImportPanel />}
+
       {(error || (ordersQuery.error && errorMessage(ordersQuery.error)) || (productsQuery.error && errorMessage(productsQuery.error))) && <div className="notice notice-error" role="alert">{error || errorMessage(ordersQuery.error || productsQuery.error)}</div>}
 
-      {section === 'products' && formOpen && (
-        <form className="admin-product-form" onSubmit={saveProduct}>
-          <div className="admin-form-title"><div><p className="eyebrow">Catalog item</p><h2>{editingProduct ? `Edit ${editingProduct.name}` : 'New product'}</h2></div><button className="icon-button" type="button" aria-label="Close product form" onClick={() => { setFormOpen(false); setEditingProduct(null); setForm(emptyProduct) }}><X size={17} /></button></div>
-          <div className="admin-form-grid">
-            <label className="form-field"><span>Name</span><Input value={form.name} onChange={(event) => setForm((value) => ({ ...value, name: event.target.value }))} required maxLength={100} /></label>
-            <label className="form-field"><span>Price</span><Input type="number" min="0" step="0.01" value={form.price} onChange={(event) => setForm((value) => ({ ...value, price: event.target.value }))} required /></label>
-            <label className="form-field"><span>Stock</span><Input type="number" min="0" step="1" value={form.stock} onChange={(event) => setForm((value) => ({ ...value, stock: event.target.value }))} required /></label>
-            <label className="form-field admin-description"><span>Description</span><Input value={form.description} onChange={(event) => setForm((value) => ({ ...value, description: event.target.value }))} /></label>
-            {!editingProduct && <label className="form-field admin-image-field"><span>Product image</span><span className="file-input-wrap"><ImagePlus size={15} /><input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => setForm((value) => ({ ...value, image: event.target.files?.[0] || null }))} /><small>{form.image?.name || 'Choose JPG, PNG, or WEBP'}</small></span></label>}
-          </div>
-          <div className="admin-form-actions"><Button type="button" variant="outline" onClick={beginCreate}>Clear</Button><Button type="submit" disabled={saving}>{saving ? 'Saving...' : editingProduct ? 'Save changes' : 'Create product'}</Button></div>
-        </form>
+      {section === 'products' && creatingProduct && (
+        <section className="admin-create-product" aria-labelledby="create-product-title">
+          <div className="admin-form-title"><div><p className="eyebrow"><span className="eyebrow-line" /> New catalog item</p><h2 id="create-product-title">Add a product</h2></div><button className="icon-button" type="button" aria-label="Close product form" onClick={() => setCreatingProduct(false)}><X size={17} /></button></div>
+          <AdminProductEditor product={null} saving={saveProductMutation.isPending} onCancel={() => setCreatingProduct(false)} onSave={(submission) => saveProduct(null, submission)} />
+        </section>
       )}
 
       {loading ? <div className="route-loading admin-loading">Loading {section}...</div> : section === 'orders' ? (
-        <section className="admin-table-wrap" aria-label="All customer orders">
-          {orders.length ? <table className="admin-table"><thead><tr><th>Order</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th><th>Date</th><th>Action</th></tr></thead><tbody>
-            {orders.map((order) => <tr key={order.id}><td className="admin-order-id">#{String(order.id).padStart(5, '0')}</td><td><div className="admin-customer-cell"><strong>{order.customer?.name || `Customer #${order.user_id}`}</strong>{order.customer?.email && <small>{order.customer.email}</small>}{order.shipping_address && <small>Ship to {order.shipping_address.address_line}, {order.shipping_address.city}</small>}</div></td><td>{order.items?.map((item) => `${item.quantity} × ${item.product_name || `Product #${item.product_id}`}`).join(', ') || 'No items'}</td><td>{formatPrice(order.total_amount)}</td><td><Badge className={`admin-status ${order.status?.toLowerCase()}`}>{order.status}</Badge></td><td>{new Date(order.created_at).toLocaleDateString()}</td><td>{order.status === 'Pending' ? <div className="admin-order-actions"><Button className="complete-order-button" variant="outline" size="sm" disabled={busyOrder === order.id} onClick={() => completeOrder(order)}><CheckCircle2 size={13} /> {busyOrder === order.id ? 'Updating...' : 'Complete'}</Button><Button variant="outline" size="sm" disabled={busyOrder === order.id} onClick={() => cancelOrder(order)}>{busyOrder === order.id ? 'Updating...' : 'Cancel'}</Button></div> : <span className="admin-muted">—</span>}</td></tr>)}
-          </tbody></table> : <div className="admin-empty">There are no orders yet.</div>}
-        </section>
+        orders.length ? <>
+          <div className="admin-order-filters" role="group" aria-label="Filter orders by status">
+            <button type="button" aria-pressed={orderFilter === 'All'} className={orderFilter === 'All' ? 'selected' : ''} onClick={() => setOrderFilter('All')}>All orders <span>{orders.length}</span></button>
+            {orderStatuses.map((status) => {
+              const count = orders.filter((order) => order.status === status).length
+              return <button type="button" aria-pressed={orderFilter === status} className={orderFilter === status ? 'selected' : ''} key={status} onClick={() => setOrderFilter(status)}>{status} <span>{count}</span></button>
+            })}
+          </div>
+          {visibleOrders.length ? <section className="admin-table-wrap" aria-label={`${orderFilter === 'All' ? 'All' : orderFilter} orders`}>
+            <table className="admin-table">
+              <thead><tr><th>Order</th><th>Customer</th><th>Items</th><th>Total</th><th>Payment</th><th>Date</th><th>Status</th><th>Action</th></tr></thead>
+              <tbody>
+                {visibleOrders.map((order) => {
+                  const nextStep = nextOrderStep[order.status]
+                  return <tr key={order.id}>
+                    <td className="admin-order-id">#{String(order.id).padStart(5, '0')}</td>
+                    <td><div className="admin-customer-cell"><strong>{order.customer?.name || `Customer #${order.user_id}`}</strong>{order.customer?.email && <small>{order.customer.email}</small>}{order.shipping_address && <small>Ship to {order.shipping_address.address_line}, {order.shipping_address.city}</small>}</div></td>
+                    <td>{order.items?.map((item) => `${item.quantity} × ${item.product_name || `Product #${item.product_id}`}`).join(', ') || 'No items'}</td>
+                    <td>{formatPrice(order.total_amount)}</td>
+                    <td><div className="admin-payment-cell"><strong>{formatPaymentMethod(order.payment_method)}</strong><small>Demo only · not processed</small></div></td>
+                    <td>{new Date(order.created_at).toLocaleDateString()}</td>
+                    <td><span className={`admin-status ${order.status.toLowerCase().replaceAll(' ', '-')}`}>{order.status}</span></td>
+                    <td>{nextStep || order.status === 'Pending' ? <div className="admin-order-actions">
+                      {nextStep && <Button className="complete-order-button" variant="outline" size="sm" disabled={busyOrder === order.id} onClick={() => advanceOrder(order, nextStep.status)}>{nextStep.status === 'Completed' ? <CheckCircle2 size={13} /> : <ArrowRight size={13} />}{busyOrder === order.id ? 'Updating...' : nextStep.label}</Button>}
+                      {order.status === 'Pending' && <Button variant="outline" size="sm" disabled={busyOrder === order.id} onClick={() => cancelOrder(order)}>{busyOrder === order.id ? 'Updating...' : 'Cancel'}</Button>}
+                    </div> : <span className="admin-muted">—</span>}</td>
+                  </tr>
+                })}
+              </tbody>
+            </table>
+          </section> : <div className="admin-empty">No {orderFilter.toLowerCase()} orders.</div>}
+        </> : <div className="admin-empty">There are no orders yet.</div>
       ) : (
-        <section className="admin-table-wrap" aria-label="Product catalog management">
-          {products.length ? <table className="admin-table"><thead><tr><th>Product</th><th>Price</th><th>Stock</th><th>Owner</th><th>Actions</th></tr></thead><tbody>
-            {products.map((product) => <tr key={product.id}><td><div className="admin-product-cell"><ProductImage product={product} className="admin-product-thumbnail" /><div><strong>{product.name}</strong><small>{product.description || 'No description'}</small></div></div></td><td>{formatPrice(product.price)}</td><td>{product.stock}</td><td>#{product.owner_id}</td><td><div className="admin-row-actions"><Button variant="outline" size="sm" aria-label={`Edit ${product.name}`} title="Edit product" onClick={() => beginEdit(product)}><Pencil size={14} /></Button><Button variant="outline" size="sm" aria-label={`Delete ${product.name}`} title="Delete product" onClick={() => deleteProduct(product)}><Trash2 size={14} /></Button></div></td></tr>)}
-          </tbody></table> : <div className="admin-empty">No products in the catalog yet.</div>}
+        <section className="admin-product-catalog" aria-label="Product catalog management">
+          <div className="admin-catalog-heading"><div><p className="eyebrow"><span className="eyebrow-line" /> Manage your collection</p><h2>{products.length} products</h2></div></div>
+          {products.length ? <div className="admin-product-grid">{products.map((product) => (
+            <article className={`admin-product-card${editingProductId === product.id ? ' is-editing' : ''}`} key={product.id}>
+              {editingProductId === product.id ? (
+                <div className="admin-inline-editor">
+                  <div className="admin-inline-editor-heading"><div><p className="eyebrow">Editing product</p><h3>{product.name}</h3></div><button className="icon-button" type="button" aria-label={`Close ${product.name} editor`} onClick={() => setEditingProductId(null)}><X size={16} /></button></div>
+                  <AdminProductEditor product={product} saving={saveProductMutation.isPending} onCancel={() => setEditingProductId(null)} onSave={(submission) => saveProduct(product, submission)} />
+                </div>
+              ) : (
+                <>
+                  <div className="admin-card-image"><ProductImage product={product} className="admin-product-card-image" /><span className={`admin-stock-chip${product.stock < 1 ? ' is-empty' : ''}`}>{product.stock > 0 ? `${product.stock} in stock` : 'Out of stock'}</span></div>
+                  <div className="admin-product-card-content">
+                    <div className="admin-product-card-title"><div><p className="admin-product-category">Product #{product.id}</p><h3>{product.name}</h3></div><strong>{formatPrice(product.price)}</strong></div>
+                    <p className="admin-product-description">{product.description || 'A considered everyday essential.'}</p>
+                    <div className="admin-product-card-actions"><Button variant="outline" size="sm" aria-label={`Edit ${product.name}`} onClick={() => beginEdit(product)}><Pencil size={14} /> Edit product</Button><Button variant="outline" size="sm" aria-label={`Delete ${product.name}`} onClick={() => deleteProduct(product)}><Trash2 size={14} /><span className="sr-only">Delete</span></Button></div>
+                  </div>
+                </>
+              )}
+            </article>
+          ))}</div> : <div className="admin-empty">No products in the catalog yet.</div>}
         </section>
       )}
     </main>

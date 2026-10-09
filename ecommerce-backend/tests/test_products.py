@@ -62,3 +62,62 @@ def test_delete_product(client, auth_headers):
 
     assert response.status_code == 200
     assert response.json()["success"] is True
+
+
+def test_product_image_url_validation_and_upload(client, auth_headers, monkeypatch):
+    import app.api.v1.products as product_routes
+
+    created = client.post(
+        "/products/",
+        headers=auth_headers,
+        data={
+            "name": "Product image validation test",
+            "description": "A product with a validated remote image.",
+            "price": "12.50",
+            "stock": "3",
+            "image_url": "https://images.example.test/product.jpg",
+        },
+    )
+    assert created.status_code == 200
+    product_id = created.json()["data"]["id"]
+    assert created.json()["data"]["image_url"] == "https://images.example.test/product.jpg"
+
+    try:
+        invalid_create = client.post(
+            "/products/",
+            headers=auth_headers,
+            data={
+                "name": "Invalid image URL test",
+                "price": "1",
+                "stock": "1",
+                "image_url": "javascript:alert(1)",
+            },
+        )
+        assert invalid_create.status_code == 400
+
+        updated = client.put(
+            f"/products/{product_id}",
+            headers=auth_headers,
+            json={"image_url": "https://images.example.test/updated.jpg"},
+        )
+        assert updated.status_code == 200
+        assert updated.json()["data"]["image_url"] == "https://images.example.test/updated.jpg"
+
+        invalid_update = client.put(
+            f"/products/{product_id}",
+            headers=auth_headers,
+            json={"image_url": "file:///etc/passwd"},
+        )
+        assert invalid_update.status_code == 400
+
+        monkeypatch.setattr(product_routes, "save_image", lambda _image: "app/uploads/products/test-upload.webp")
+        uploaded = client.post(
+            f"/products/{product_id}/image",
+            headers=auth_headers,
+            files={"image": ("test.webp", b"image bytes", "image/webp")},
+        )
+        assert uploaded.status_code == 200
+        assert uploaded.json()["data"]["image_url"] == "app/uploads/products/test-upload.webp"
+    finally:
+        deleted = client.delete(f"/products/{product_id}", headers=auth_headers)
+        assert deleted.status_code == 200

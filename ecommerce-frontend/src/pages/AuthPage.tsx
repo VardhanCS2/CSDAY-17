@@ -22,7 +22,9 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<AuthField, string>>>({})
-  const destination = location.state?.from?.pathname || '/'
+  const destination = location.state?.from?.pathname
+    ? `${location.state.from.pathname}${location.state.from.search || ''}`
+    : '/'
 
   if (user) return <Navigate to={destination} replace />
 

@@ -33,6 +33,15 @@ export const productSchema = z.object({
     .regex(/^\d+$/, 'Stock must be a whole number.')
     .transform(Number)
     .pipe(z.number().int().min(0, 'Stock cannot be negative.')),
+  image_url: z.string().trim().default('').refine((value) => {
+    if (!value) return true
+    try {
+      const url = new URL(value)
+      return (url.protocol === 'http:' || url.protocol === 'https:') && Boolean(url.hostname)
+    } catch {
+      return false
+    }
+  }, 'Enter a valid image URL beginning with http:// or https://.'),
 })
 
 export const checkoutSchema = z.object({

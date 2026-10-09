@@ -28,14 +28,23 @@ def test_create_order(client, auth_headers):
     response = client.post(
         "/orders/",
         headers=auth_headers,
-        json={"shipping_address": shipping_address},
+        json={"shipping_address": shipping_address, "payment_method": "card"},
     )
 
 
     assert response.status_code == 200
     assert response.json()["data"]["shipping_address"] == shipping_address
+    assert response.json()["data"]["payment_method"] == "card"
 
     order_id = response.json()["data"]["id"]
+    customer_orders = client.get("/orders/", headers=auth_headers)
+    saved_order = next(order for order in customer_orders.json()["data"] if order["id"] == order_id)
+    assert saved_order["payment_method"] == "card"
+
+    admin_orders = client.get("/orders/admin/all", headers=auth_headers)
+    admin_order = next(order for order in admin_orders.json()["data"] if order["id"] == order_id)
+    assert admin_order["payment_method"] == "card"
+
     db = SessionLocal()
     try:
         order = db.query(Order).filter(Order.id == order_id).first()
@@ -119,7 +128,7 @@ def test_customer_cannot_get_all_orders(client, customer_headers):
     assert response.status_code == 403
 
 
-def test_admin_can_complete_pending_order(client, auth_headers):
+def test_admin_must_advance_order_through_each_fulfillment_status(client, auth_headers):
 
     profile = client.get("/auth/me", headers=auth_headers).json()["data"]
     db = SessionLocal()
@@ -131,12 +140,20 @@ def test_admin_can_complete_pending_order(client, auth_headers):
     db.close()
 
     response = client.patch(
-        f"/orders/{order_id}/complete",
-        headers=auth_headers
+        f"/orders/{order_id}/status",
+        headers=auth_headers,
+        json={"status": "Completed"},
     )
+    assert response.status_code == 400
 
-    assert response.status_code == 200
-    assert response.json()["data"]["status"] == "Completed"
+    for status in ("Packed", "Shipped", "Out for Delivery", "Delivered", "Completed"):
+        response = client.patch(
+            f"/orders/{order_id}/status",
+            headers=auth_headers,
+            json={"status": status},
+        )
+        assert response.status_code == 200
+        assert response.json()["data"]["status"] == status
 
     db = SessionLocal()
     try:
@@ -146,7 +163,11 @@ def test_admin_can_complete_pending_order(client, auth_headers):
         db.close()
 
 
-def test_customer_cannot_complete_order(client, customer_headers):
-    response = client.patch("/orders/1/complete", headers=customer_headers)
+def test_customer_cannot_advance_order_status(client, customer_headers):
+    response = client.patch(
+        "/orders/1/status",
+        headers=customer_headers,
+        json={"status": "Packed"},
+    )
 
     assert response.status_code == 403

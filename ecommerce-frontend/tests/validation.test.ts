@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { checkoutSchema, loginSchema, productSchema, registerSchema } from '@/lib/validation'
+import { formatCardExpiry, formatCardNumber, isValidCardExpiry, isValidCardNumber } from '@/lib/payment-format'
 
 describe('login validation', () => {
   it('accepts valid credentials', () => {
@@ -36,7 +37,14 @@ describe('registration validation', () => {
 
 describe('product form validation', () => {
   it('converts a valid price to a number', () => {
-    expect(productSchema.parse({ name: 'Cup', description: '', price: '12.50', stock: '4' }).price).toBe(12.5)
+    expect(productSchema.parse({ name: 'Cup', description: '', price: '12.50', stock: '4' })).toMatchObject({ price: 12.5, image_url: '' })
+  })
+
+  it('accepts valid image URLs and rejects unsafe or malformed ones', () => {
+    const base = { name: 'Cup', description: '', price: '12.50', stock: '4' }
+    expect(productSchema.safeParse({ ...base, image_url: 'https://images.example.test/cup.jpg' }).success).toBe(true)
+    expect(productSchema.safeParse({ ...base, image_url: 'javascript:alert(1)' }).success).toBe(false)
+    expect(productSchema.safeParse({ ...base, image_url: 'not-a-url' }).success).toBe(false)
   })
 
   it('rejects prices with excess precision', () => {
@@ -66,6 +74,33 @@ describe('checkout validation', () => {
 
   it('accepts a complete delivery address', () => {
     expect(checkoutSchema.parse(address)).toEqual(address)
+  })
+
+  describe('demo card input formatting and validation', () => {
+    it('formats card digits into groups without requiring spaces', () => {
+      expect(formatCardNumber('4242424242424242')).toBe('4242 4242 4242 4242')
+      expect(formatCardNumber('4242 4242 4242 4242')).toBe('4242 4242 4242 4242')
+      expect(formatCardNumber('42424242424242424242')).toBe('4242 4242 4242 4242 424')
+    })
+
+    it('inserts the expiry separator while typing', () => {
+      expect(formatCardExpiry('1230')).toBe('12/30')
+      expect(formatCardExpiry('12/30')).toBe('12/30')
+      expect(formatCardExpiry('1')).toBe('1')
+    })
+
+    it('validates card numbers with the Luhn checksum', () => {
+      expect(isValidCardNumber('4242 4242 4242 4242')).toBe(true)
+      expect(isValidCardNumber('4242 4242 4242 4241')).toBe(false)
+    })
+
+    it('accepts current or future expiry months and rejects expired or invalid dates', () => {
+      const now = new Date(2026, 5, 15)
+      expect(isValidCardExpiry('06/26', now)).toBe(true)
+      expect(isValidCardExpiry('07/26', now)).toBe(true)
+      expect(isValidCardExpiry('05/26', now)).toBe(false)
+      expect(isValidCardExpiry('13/30', now)).toBe(false)
+    })
   })
 
   it('rejects missing delivery fields', () => {

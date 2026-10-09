@@ -4,6 +4,13 @@ import { ArrowUpRight, LogOut, Menu, Moon, ShoppingBag, Sun, UserRound, X } from
 import { Toaster } from 'sonner'
 import { useAuth } from '@/hooks/useAuth'
 import { useCartStore } from '@/stores/cart-store'
+import { RealtimePanel } from '@/components/RealtimePanel'
+
+const apiDocsUrl = import.meta.env.VITE_API_DOCS_URL || (
+  import.meta.env.VITE_API_BASE_URL?.startsWith('http')
+    ? new URL('/docs', import.meta.env.VITE_API_BASE_URL).href
+    : 'http://127.0.0.1:8000/docs'
+)
 
 export function StoreLayout() {
   const { user, logout } = useAuth()
@@ -34,6 +41,7 @@ export function StoreLayout() {
         <nav className={`main-nav ${menuOpen ? 'is-open' : ''}`} aria-label="Main navigation">
           <NavLink to="/" end onClick={() => setMenuOpen(false)}>Shop all</NavLink>
           {user && <NavLink to="/orders" onClick={() => setMenuOpen(false)}>Your orders</NavLink>}
+          {user && <NavLink to="/jobs" onClick={() => setMenuOpen(false)}>Background jobs</NavLink>}
           {user?.role === 'admin' && <NavLink to="/admin" onClick={() => setMenuOpen(false)}>Admin</NavLink>}
         </nav>
         <div className="header-actions">
@@ -42,6 +50,7 @@ export function StoreLayout() {
           </button>
           {user ? (
             <>
+              <RealtimePanel />
               <span className="account-name">Hi, {user.name.split(' ')[0]}</span>
               <button className="icon-button" onClick={signOut} aria-label="Sign out" title="Sign out"><LogOut size={18} /></button>
             </>
@@ -52,7 +61,7 @@ export function StoreLayout() {
         </div>
       </header>
       <Outlet />
-      <footer className="site-footer"><Link to="/" className="footer-brand">common goods</Link><span>Everyday essentials, made more considered.</span><a href={import.meta.env.VITE_API_DOCS_URL || '/api/docs'} target="_blank" rel="noreferrer">API docs <ArrowUpRight size={13} /></a></footer>
+      <footer className="site-footer"><Link to="/" className="footer-brand">common goods</Link><span>Everyday essentials, made more considered.</span><a href={apiDocsUrl} target="_blank" rel="noreferrer">API docs <ArrowUpRight size={13} /></a></footer>
     </div>
   )
 }

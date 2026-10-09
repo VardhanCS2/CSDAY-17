@@ -44,12 +44,12 @@ export function CartPage() {
         <div className="cart-layout">
           <div className="cart-items">
             {items.map((item) => <article className="cart-item" key={item.product_id}>
-              <Link to={`/product/${item.product_id}`} className="cart-item-image"><ProductImage product={{ id: item.product_id, name: item.name, image_url: null }} className="product-image" /></Link>
+              <Link to={`/product/${item.product_id}`} className="cart-item-image"><ProductImage product={{ id: item.product_id, name: item.name, image_url: item.image_url ?? null }} className="product-image" /></Link>
               <div className="cart-item-description"><Link to={`/product/${item.product_id}`} className="product-name">{item.name}</Link><p>{item.description || 'A considered everyday essential.'}</p><button className="remove-link" disabled={busy} onClick={() => removeItem(item.product_id)}><Trash2 size={13} /> Remove</button></div>
               <div className="cart-item-controls"><strong>{formatPrice(item.total_price || item.price * item.quantity)}</strong><div className="quantity-stepper"><button disabled={busy || item.quantity <= 1} onClick={() => changeQuantity(item.product_id, item.quantity - 1)} aria-label={`Decrease ${item.name} quantity`}><Minus size={13} /></button><span>{item.quantity}</span><button disabled={busy} onClick={() => changeQuantity(item.product_id, item.quantity + 1)} aria-label={`Increase ${item.name} quantity`}><Plus size={13} /></button></div></div>
             </article>)}
           </div>
-          <aside className="order-summary"><p className="eyebrow">At a glance</p><div className="summary-row"><span>Subtotal</span><b>{formatPrice(subtotal)}</b></div><div className="summary-row"><span>Shipping</span><span>Confirmed at checkout</span></div><div className="summary-total"><span>Total</span><b>{formatPrice(subtotal)}</b></div><Button className="checkout-button" disabled={busy || !items.length} onClick={() => navigate('/checkout')}>Continue to checkout<ArrowRight size={16} /></Button><p className="summary-note">Shipping details are confirmed before your order is placed.</p></aside>
+          <aside className="order-summary"><p className="eyebrow">At a glance</p><div className="summary-row"><span>Subtotal</span><b>{formatPrice(subtotal)}</b></div><div className="summary-row"><span>Shipping</span><span>Confirmed at checkout</span></div><div className="summary-total"><span>Total</span><b>{formatPrice(subtotal)}</b></div><Button className="checkout-button" disabled={busy || !items.length} onClick={() => navigate('/payments')}>Continue to checkout<ArrowRight size={16} /></Button><p className="summary-note">Shipping details are confirmed before your order is placed.</p></aside>
         </div>
       )}
     </main>
